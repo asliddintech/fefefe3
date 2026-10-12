@@ -1,5 +1,15 @@
 import fs from 'fs';
 import dns from 'dns';
+import http from 'http';
+
+// Render.com Web Service port tekshiruvi uchun yengil HTTP server
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('🤖 Google Gemini Telegram Boti faol ishlamoqda!\n');
+}).listen(PORT, () => {
+    console.log(`🌐 HTTP server ${PORT}-portda ishlamoqda.`);
+});
 
 // DNS da IPv4 ni birinchi o'ringa qo'yish (Telegram ulanish tezligini oshirish)
 dns.setDefaultResultOrder('ipv4first');
