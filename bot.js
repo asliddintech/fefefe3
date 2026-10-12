@@ -365,7 +365,7 @@ async function handleUpdate(update) {
         }
 
         if (waitMsg && waitMsg.result) {
-            await tgCall('deleteMessage', { chatId, message_id: waitMsg.result.message_id }).catch(() => {});
+            await tgCall('deleteMessage', { chat_id: chatId, message_id: waitMsg.result.message_id }).catch(() => {});
         }
         return;
     }
