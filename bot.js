@@ -6,7 +6,7 @@ import http from 'http';
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('🤖 Google Gemini Telegram Boti faol ishlamoqda!\n');
+    res.end('🎵 Telegram AI Musiqa Boti faol ishlamoqda!\n');
 }).listen(PORT, () => {
     console.log(`🌐 HTTP server ${PORT}-portda ishlamoqda.`);
 });
@@ -42,9 +42,11 @@ if (!BOT_TOKEN) {
 }
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const TELEGRAM_FILE_API = `https://api.telegram.org/file/bot${BOT_TOKEN}`;
 
-// Har bir chat uchun suhbat tarixini saqlash
+// Foydalanuvchilar suhbat tarixi va pleylisti
 const chatHistories = new Map();
+const userPlaylists = new Map();
 
 // Telegram API so'rov yuboruvchi yordamchi funksiya
 async function tgCall(method, body = {}) {
@@ -99,7 +101,7 @@ async function sendLongMessage(chatId, text, options = {}) {
     }
 }
 
-// Ovozli xabar (Voice) yoki Audio yuborish
+// Ovozli xabar (Voice) yuborish
 async function sendTelegramVoice(chatId, wavBuffer, caption = '') {
     const formData = new FormData();
     formData.append('chat_id', chatId);
@@ -111,50 +113,25 @@ async function sendTelegramVoice(chatId, wavBuffer, caption = '') {
             method: 'POST',
             body: formData
         });
-        const json = await res.json();
-        if (json && json.ok) return json;
-    } catch (err) {
-        console.error('sendVoice xatosi:', err.message);
-    }
-
-    // Agar sendVoice o'tmasa, sendAudio orqali yuboramiz
-    return sendTelegramAudio(chatId, wavBuffer, "Gemini Qo'shig'i", "Gemini AI", caption);
-}
-
-// Audio fayl sifatida yuborish
-async function sendTelegramAudio(chatId, wavBuffer, title = "Qo'shiq", performer = 'Gemini AI', caption = '') {
-    const formData = new FormData();
-    formData.append('chat_id', chatId);
-    formData.append('audio', new Blob([wavBuffer], { type: 'audio/wav' }), 'song.wav');
-    formData.append('title', title);
-    formData.append('performer', performer);
-    if (caption) formData.append('caption', caption.slice(0, 1000));
-
-    try {
-        const res = await fetch(`${TELEGRAM_API}/sendAudio`, {
-            method: 'POST',
-            body: formData
-        });
         return await res.json();
     } catch (err) {
-        console.error('sendAudio xatosi:', err.message);
+        console.error('sendVoice xatosi:', err.message);
         return { ok: false, error: err };
     }
 }
 
-// Gemini TTS orqali matnni ovozga aylantirish (Ovozli xabar yaratish)
+// Gemini TTS (Text-to-Speech)
 async function textToSpeech(textPrompt) {
     if (!GEMINI_API_KEY) return null;
 
-    // Matnni belgilardan tozalash va qisqartirish (TTS yaxshi talaffuz qilishi uchun)
     const cleanText = textPrompt
         .replace(/[*_#`~\[\]()—]/g, ' ')
         .replace(/\n+/g, '. ')
-        .slice(0, 600);
+        .slice(0, 450);
 
-    const models = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+    const ttsModels = ['gemini-2.5-flash-preview-tts', 'gemini-3.1-flash-tts-preview', 'gemini-3.8-flash-tts'];
 
-    for (const model of models) {
+    for (const model of ttsModels) {
         try {
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
             const res = await fetch(url, {
@@ -162,9 +139,7 @@ async function textToSpeech(textPrompt) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: cleanText }] }],
-                    generationConfig: {
-                        responseModalities: ['AUDIO']
-                    }
+                    generationConfig: { responseModalities: ['AUDIO'] }
                 })
             });
 
@@ -182,10 +157,10 @@ async function textToSpeech(textPrompt) {
     return null;
 }
 
-// Google Gemini API orqali javob olish (Matn)
-async function askGemini(chatId, userPrompt) {
+// Google Gemini API orqali javob olish (Matnli musiqa qidiruv va maslahat)
+async function askGeminiMusic(chatId, userPrompt, systemPrompt = '') {
     if (!GEMINI_API_KEY) {
-        return "⚠️ Gemini API kaliti topilmadi.";
+        return "⚠️ Gemini API kaliti sozlanmagan.";
     }
 
     if (!chatHistories.has(chatId)) {
@@ -193,25 +168,24 @@ async function askGemini(chatId, userPrompt) {
     }
     const history = chatHistories.get(chatId);
 
-    // Foydalanuvchi savolini tarixga qo'shish
-    history.push({
-        role: 'user',
-        parts: [{ text: userPrompt }]
-    });
+    const baseSystemPrompt = 
+        "Sen professional Telegram Musiqa Botisan. " +
+        "Foydalanuvchilarga barcha turdagi qo'shiqlarni (o'zbekcha, ruscha, inglizcha, xitoycha, trenddagi remikslar va h.k.) topib berasan. " +
+        "Qo'shiq nomi, ijrochi yoki matnidan bir qator kelganda, uni aniq topib, quyidagicha chiroyli formatda ber:\n" +
+        "🎵 Qo'shiq: [Nomi]\n" +
+        "👤 Ijrochi: [Ijrochi]\n" +
+        "📅 Yil / Janr: ...\n" +
+        "📝 Mashhur parcha / Ma'lumot: ...\n" +
+        "Doimo o'zbek tilida xushmuomala, musiqiy emojilar bilan va aniq javob ber.";
 
-    if (history.length > 10) {
-        history.splice(0, history.length - 10);
-    }
-
-    const requestBody = {
-        contents: history,
-        generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2048
+    const contents = [
+        {
+            role: 'user',
+            parts: [{ text: systemPrompt ? `${baseSystemPrompt}\n${systemPrompt}\nFoydalanuvchi: ${userPrompt}` : `${baseSystemPrompt}\nFoydalanuvchi: ${userPrompt}` }]
         }
-    };
+    ];
 
-    const models = ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash'];
+    const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
 
     for (const model of models) {
         try {
@@ -219,75 +193,208 @@ async function askGemini(chatId, userPrompt) {
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify({
+                    contents,
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 1500
+                    }
+                })
             });
 
             const data = await res.json();
-
             if (data.candidates && data.candidates[0] && data.candidates[0].content) {
                 const parts = data.candidates[0].content.parts || [];
                 const aiResponse = parts.filter(p => p.text).map(p => p.text).join('\n');
-
-                if (aiResponse) {
-                    history.push({
-                        role: 'model',
-                        parts: [{ text: aiResponse }]
-                    });
-                    return aiResponse;
-                }
-            } else if (data.error) {
-                console.error(`Gemini (${model}) xatoligi:`, data.error.message);
+                if (aiResponse) return aiResponse;
             }
         } catch (err) {
-            console.error(`Gemini (${model}) tarmoq xatosi:`, err.message);
+            console.error(`Gemini (${model}) xatosi:`, err.message);
         }
     }
 
-    return "❌ Kechirasiz, javob olishda xatolik yuz berdi.";
+    return "❌ Kechirasiz, musiqiy sun'iy intellektdan javob olishda uzilish yuz berdi. Iltimos, qayta urinib ko'ring.";
 }
 
-// Asosiy menyu
+// Telegramdan Voice / Audio faylni yuklab olib, Gemini orqali aniqlash
+async function recognizeAudioWithAI(fileId, mimeType = 'audio/ogg') {
+    if (!GEMINI_API_KEY) return "⚠️ Gemini API kaliti sozlanmagan.";
+
+    try {
+        // 1. Telegramdan fayl yo'lini olish
+        const fileInfo = await tgCall('getFile', { file_id: fileId });
+        if (!fileInfo || !fileInfo.ok || !fileInfo.result || !fileInfo.result.file_path) {
+            return "❌ Ovozli faylni yuklab olish imkoni bo'lmadi.";
+        }
+
+        const filePath = fileInfo.result.file_path;
+        const downloadUrl = `${TELEGRAM_FILE_API}/${filePath}`;
+
+        // 2. Faylni yuklab olish
+        const fileRes = await fetch(downloadUrl);
+        const arrayBuffer = await fileRes.arrayBuffer();
+        const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+
+        // Fayl kengaytmasiga qarab mime type belgilash
+        let actualMime = mimeType;
+        if (filePath.endsWith('.mp3')) actualMime = 'audio/mp3';
+        else if (filePath.endsWith('.wav')) actualMime = 'audio/wav';
+        else if (filePath.endsWith('.oga') || filePath.endsWith('.ogg')) actualMime = 'audio/ogg';
+
+        // 3. Gemini Multimodal orqali audioni tahlil qilish
+        const models = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+
+        for (const model of models) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                {
+                                    text: "Sen professional musiqa aniqlovchi sun'iy intellektsan. " +
+                                          "Ushbu audio/ovozli xabarni diqqat bilan eshitib tahlil qil. " +
+                                          "Undagi kuylangan qo'shiq, musiqa ohangi yoki so'zlarni aniqla. " +
+                                          "Qo'shiq nomi va ijrochisini topib, foydalanuvchiga xushmuomala qilib taqdim et. " +
+                                          "Agar aniq bo'lmasa, eng o'xshash ehtimolli qo'shiqlarni ko'rsat."
+                                },
+                                {
+                                    inlineData: {
+                                        mimeType: actualMime,
+                                        data: base64Audio
+                                    }
+                                }
+                            ]
+                        }]
+                    })
+                });
+
+                const data = await res.json();
+                if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+                    const parts = data.candidates[0].content.parts || [];
+                    const text = parts.filter(p => p.text).map(p => p.text).join('\n');
+                    if (text) return text;
+                }
+            } catch (err) {
+                console.error(`Audio tahlil (${model}) xatosi:`, err.message);
+            }
+        }
+
+        return "🎙 Ushbu audiodan qo'shiqni aniqlab bo'lmadi. Iltimos, musiqani biroz balandroq yoki toza ovozda yozib yuboring.";
+    } catch (err) {
+        console.error('Audio yuklab olish xatosi:', err.message);
+        return "❌ Audioni qabul qilishda texnik xatolik yuz berdi.";
+    }
+}
+
+// Asosiy boshqaruv menyusi (Klaviatura)
 const mainMenu = {
     keyboard: [
-        [{ text: "🎤 Ovozli qo'shiq aytish" }, { text: "💬 Savol berish" }],
-        [{ text: "🔄 Yangi suhbat" }, { text: "ℹ️ Ma'lumot" }]
+        [{ text: "🔍 Qo'shiq qidirish" }, { text: "🎙 Ovozli qidiruv (Voice)" }],
+        [{ text: "🔥 Trenddagi qo'shiqlar" }, { text: "📁 Mening pleylistim" }],
+        [{ text: "🔄 Yangi suhbat" }, { text: "ℹ️ Bot haqida" }]
     ],
     resize_keyboard: true
 };
 
 // Xabarlarni boshqarish
 async function handleUpdate(update) {
-    // 1. Agar inline tugma bosilgan bo'lsa (ovozli eshitish)
+    // 1. Agar inline tugma bosilgan bo'lsa
     if (update.callback_query) {
         const query = update.callback_query;
         const chatId = query.message.chat.id;
         const data = query.data;
 
-        await tgCall('answerCallbackQuery', { callback_query_id: query.id, text: "Ovoz tayyorlanmoqda..." });
+        // Pleylistga qo'shish
+        if (data.startsWith('add_pl_')) {
+            const trackName = decodeURIComponent(data.replace('add_pl_', ''));
+            if (!userPlaylists.has(chatId)) {
+                userPlaylists.set(chatId, []);
+            }
+            const playlist = userPlaylists.get(chatId);
+            if (!playlist.includes(trackName)) {
+                playlist.push(trackName);
+                await tgCall('answerCallbackQuery', { 
+                    callback_query_id: query.id, 
+                    text: `✅ Pleylistga qo'shildi: ${trackName}` 
+                });
+            } else {
+                await tgCall('answerCallbackQuery', { 
+                    callback_query_id: query.id, 
+                    text: "Ushbu tarona allaqachon pleylistingizda bor!" 
+                });
+            }
+            return;
+        }
 
+        // Pleylistni tozalash
+        if (data === 'clear_playlist') {
+            userPlaylists.delete(chatId);
+            await tgCall('answerCallbackQuery', { callback_query_id: query.id, text: "Pleylist tozalandi!" });
+            await sendLongMessage(chatId, "📁 Pleylistingiz tozalandi. Yangi qo'shiqlarni qidirib qo'shishingiz mumkin!");
+            return;
+        }
+
+        // TTS ovozli eshitish
         if (data === 'tts_last') {
+            await tgCall('answerCallbackQuery', { callback_query_id: query.id, text: "Ovoz tayyorlanmoqda..." });
             await sendAction(chatId, 'record_voice');
             const history = chatHistories.get(chatId) || [];
             const lastModelMsg = [...history].reverse().find(m => m.role === 'model');
             if (lastModelMsg && lastModelMsg.parts && lastModelMsg.parts[0]) {
                 const audioBuffer = await textToSpeech(lastModelMsg.parts[0].text);
                 if (audioBuffer) {
-                    await sendTelegramVoice(chatId, audioBuffer, "🔊 Gemini ovozli xabari");
-                } else {
-                    await sendLongMessage(chatId, "Kechirasiz, ovozni yaratib bo'lmadi.");
+                    await sendTelegramVoice(chatId, audioBuffer, "🔊 Gemini ovozli javobi");
                 }
             }
+            return;
         }
+
+        await tgCall('answerCallbackQuery', { callback_query_id: query.id });
         return;
     }
 
-    // 2. Agar matnli xabar kelgan bo'lsa
-    if (!update.message || !update.message.text) return;
-
+    if (!update.message) return;
     const message = update.message;
     const chatId = message.chat.id;
-    const text = message.text.trim();
     const firstName = message.from.first_name || 'Foydalanuvchi';
+
+    // 2. Agar Foydalanuvchi Ovozli Xabar (Voice) yoki Audio yuborgan bo'lsa
+    if (message.voice || message.audio) {
+        const fileId = message.voice ? message.voice.file_id : message.audio.file_id;
+        const mime = message.voice ? 'audio/ogg' : (message.audio.mime_type || 'audio/mp3');
+
+        await sendAction(chatId, 'typing');
+        const waitMsg = await sendLongMessage(chatId, "🎧 *Ovozli xabaringiz qabul qilindi. Sun'iy intellekt qo'shiqni aniqlamoqda...*", { parse_mode: 'Markdown' });
+
+        const result = await recognizeAudioWithAI(fileId, mime);
+
+        if (waitMsg && waitMsg.result) {
+            await tgCall('deleteMessage', { chat_id: chatId, message_id: waitMsg.result.message_id }).catch(() => {});
+        }
+
+        // Qidiruv va YouTube tugmalari
+        const inlineKeyboard = {
+            inline_keyboard: [
+                [
+                    { text: "▶️ YouTube'da tinglash", url: `https://www.youtube.com/results?search_query=${encodeURIComponent(result.slice(0, 40))}` },
+                    { text: "➕ Pleylistga qo'shish", callback_data: `add_pl_${encodeURIComponent(result.slice(0, 30))}` }
+                ]
+            ]
+        };
+
+        await sendLongMessage(chatId, `🎙 *Ovoz orqali aniqlangan natija:*\n\n${result}`, {
+            parse_mode: 'Markdown',
+            reply_markup: inlineKeyboard
+        });
+        return;
+    }
+
+    // 3. Agar matnli xabar kelgan bo'lsa
+    if (!message.text) return;
+    const text = message.text.trim();
 
     console.log(`[Xabar] ${firstName}: ${text}`);
 
@@ -295,92 +402,123 @@ async function handleUpdate(update) {
     if (text === '/start') {
         await sendLongMessage(
             chatId,
-            `Assalomu alaykum, *${firstName}*! 🤖🎵✨\n\n` +
-            `Men **Google Gemini** sun'iy intellekti bilan integratsiya qilingan aqlli ovozli botman!\n\n` +
-            `🎤 **Imkoniyatlarim:**\n` +
-            `• Istalgan mavzuda **ovozli qo'shiq** kuylash\n` +
-            `• Har qanday savollarga to'liq va aqlli javob berish\n` +
-            `• Ovozli xabarlar (Audio) orqali so'zlashish\n\n` +
-            `Quyidagi tugmalardan birini tanlang yoki savolingizni yozib yuboring:`,
+            `Assalomu alaykum, *${firstName}*! 🎵🎧✨\n\n` +
+            `Men sun'iy intellekt (**Google Gemini AI**) bilan jihozlangan professional **Telegram Musiqa Botiman**!\n\n` +
+            `🌟 **Imkoniyatlarim:**\n` +
+            `• 🔍 **Nomi va ijrochi bo'yicha qidiruv** (O'zbek, rus, jahon taronalari)\n` +
+            `• 📝 **Matn bo'laklari orqali qidiruv** (Qo'shiq so'zlarini yozsangiz topaman)\n` +
+            `• 🎙 **Voice / Audio qidiruv** (Ovozli xabar yuborsangiz aniqlayman)\n` +
+            `• 🔥 **Trenddagi TOP qo'shiqlar** ro'yxati\n` +
+            `• 📁 **Shaxsiy pleylist** tuzish\n\n` +
+            `Istalgan qo'shiq nomi yoki so'zlarini yozing, yoki quyidagi menyudan foydalaning:`,
             { parse_mode: 'Markdown', reply_markup: mainMenu }
         );
         return;
     }
 
-    // Suhbat tarixini tozalash
+    // Yangi suhbat (Tarixni tozalash)
     if (text === '🔄 Yangi suhbat' || text === '/reset' || text === '/clear') {
         chatHistories.delete(chatId);
-        await sendLongMessage(
-            chatId,
-            `🔄 Suhbat tarixi tozalandi! Yangi savol yoki qo'shiq mavzusini yozib yuboring:`,
-            { reply_markup: mainMenu }
-        );
+        await sendLongMessage(chatId, `🔄 Suhbat tarixi yangilandi! Qaysi qo'shiqni qidiramiz?`, { reply_markup: mainMenu });
         return;
     }
 
     // Bot haqida ma'lumot
-    if (text === "ℹ️ Ma'lumot" || text === '/info') {
+    if (text === "ℹ️ Bot haqida" || text === '/info') {
         await sendLongMessage(
             chatId,
             `ℹ️ *Bot haqida:*\n\n` +
-            `• **Sun'iy intellekt:** Google Gemini AI\n` +
-            `• **Ovoz sintezi (TTS):** Gemini 3.8 Flash TTS\n` +
-            `• Menga shunchaki *"Ovozli qo'shiq ayt"* yoki istalgan mavzuni yozing, men ham matnini, ham ovozli audio xabarini tayyorlab beraman! 🎧`,
+            `• **Musiqiy Sun'iy Intellekt:** Google Gemini AI (Multimodal)\n` +
+            `• **Qidiruv turlari:** Matn, Ijrochi, Qo'shiq so'zlari, Ovozli xabar (Voice/Humming)\n` +
+            `• **Platforma:** Telegram Bot API & Node.js\n\n` +
+            `Menga shunchaki qo'shiq nomini, so'zlarini yoki ovozli xabar yuboring! 🎶`,
             { parse_mode: 'Markdown', reply_markup: mainMenu }
         );
         return;
     }
 
-    // Ovozli qo'shiq so'rovi tekshiruvi (qo'shiq, qoshiq, kishik, kuyla, ayt, ashula va h.k.)
-    const isSongRequest = 
-        text === "🎤 Ovozli qo'shiq aytish" ||
-        /qo['`]?shiq|qoshiq|kishik|ashula|kuyla|sing|musiqa|musiqi/i.test(text) ||
-        /ovozli/i.test(text);
-
-    if (text === "💬 Savol berish") {
-        await sendLongMessage(chatId, `✍️ Marhamat, istalgan savolingizni yozib yuboring:`);
+    // Qo'shiq qidirish yo'riqnomasi
+    if (text === "🔍 Qo'shiq qidirish") {
+        await sendLongMessage(
+            chatId,
+            `🔍 *Qo'shiq qidirish bo'limi:*\n\n` +
+            `Istalgan qo'shiq nomi yoki ijrochisini yozib yuboring.\n` +
+            `*Masalan:*\n` +
+            `• \`Konsta - O'zbekistonlik\`\n` +
+            `• \`Tungi shahar\`\n` +
+            `• \`Jony - Комета\`\n` +
+            `• \`The Weeknd - Blinding Lights\``,
+            { parse_mode: 'Markdown', reply_markup: mainMenu }
+        );
         return;
     }
 
-    if (isSongRequest) {
-        // Qo'shiq kuylash va ovozli xabar yuborish
-        await sendAction(chatId, 'record_voice');
-        const waitMsg = await sendLongMessage(chatId, `🎵 *Gemini qo'shiq kuylashga tayyorlanmoqda va ovozli xabar yozmoqda...* 🎙`);
+    // Ovozli qidiruv yo'riqnomasi
+    if (text === "🎙 Ovozli qidiruv (Voice)") {
+        await sendLongMessage(
+            chatId,
+            `🎙 *Ovozli qidiruv rejimi:*\n\n` +
+            `Menga **5–15 soniyalik** ovozli xabar (Voice message) yoki qisqa audio fayl yuboring.\n\n` +
+            `Siz qo'shiqni o'zingiz xirgoyi qilib kuylashingiz yoki fonda yangrayotgan musiqani yozib olishingiz mumkin. Sun'iy intellekt uni aniqlaydi! 🎧`,
+            { parse_mode: 'Markdown', reply_markup: mainMenu }
+        );
+        return;
+    }
 
-        const prompt = text === "🎤 Ovozli qo'shiq aytish"
-            ? "Menga o'zbek tilida quvnoq, chiroyli va qisqa (2 band va naqoratdan iborat) qo'shiq yozib ber."
-            : `Foydalanuvchi so'rovi: "${text}". O'zbek tilida chiroyli, sho'x va qisqa (2 band va naqorat) qo'shiq yozib ber.`;
-
-        const lyrics = await askGemini(chatId, prompt);
-
-        // Qo'shiq matnini yuborish
-        await sendLongMessage(chatId, `🎶 *Qo'shiq matni:*\n\n${lyrics}`, { parse_mode: 'Markdown' });
-
-        // Ovozli xabar yaratish (TTS)
-        await sendAction(chatId, 'upload_voice');
-        const audioBuffer = await textToSpeech(lyrics);
-
-        if (audioBuffer) {
-            await sendTelegramVoice(chatId, audioBuffer, "🎙 Gemini AI ovozli qo'shig'i 🎵");
-        }
-
-        if (waitMsg && waitMsg.result) {
-            await tgCall('deleteMessage', { chat_id: chatId, message_id: waitMsg.result.message_id }).catch(() => {});
+    // Shaxsiy Pleylist
+    if (text === "📁 Mening pleylistim") {
+        const playlist = userPlaylists.get(chatId) || [];
+        if (playlist.length === 0) {
+            await sendLongMessage(
+                chatId,
+                `📁 *Sizning pleylistingiz hozircha bo'sh.*\n\nQo'shiq qidirganda uning ostidagi *"➕ Pleylistga qo'shish"* tugmasini bosing va o'z to'plamingizni yarating! 🎧`,
+                { parse_mode: 'Markdown', reply_markup: mainMenu }
+            );
+        } else {
+            const listText = playlist.map((item, idx) => `${idx + 1}. 🎶 *${item}*`).join('\n');
+            const inlineKeyboard = {
+                inline_keyboard: [
+                    [{ text: "🗑 Pleylistni tozalash", callback_data: "clear_playlist" }]
+                ]
+            };
+            await sendLongMessage(
+                chatId,
+                `📁 *Sizning shaxsiy pleylistingiz:*\n\n${listText}\n\nJami: ${playlist.length} ta tarona.`,
+                { parse_mode: 'Markdown', reply_markup: inlineKeyboard }
+            );
         }
         return;
     }
 
-    // Oddiy savollarga javob berish
+    // Trenddagi TOP musiqalar
+    if (text === "🔥 Trenddagi qo'shiqlar") {
+        await sendAction(chatId, 'typing');
+        const trendPrompt = "Hozirgi vaqtda eng ommabop va trenddagi 5 ta o'zbekcha va 5 ta jahon xit qo'shiqlarini nomlari va ijrochilari bilan tartiblangan ro'yxat qilib ber.";
+        const trendResponse = await askGeminiMusic(chatId, trendPrompt);
+
+        await sendLongMessage(chatId, `🔥 *Hozirgi kunda eng ommabop trend qo'shiqlar:*\n\n${trendResponse}`, {
+            parse_mode: 'Markdown',
+            reply_markup: mainMenu
+        });
+        return;
+    }
+
+    // Qo'shiq qidiruvi / Umumiy so'rovlar (AI bilan muloqot)
     await sendAction(chatId, 'typing');
-    const typingInterval = setInterval(() => sendAction(chatId, 'typing'), 4000);
+    const typingInterval = setInterval(() => sendAction(chatId, 'typing'), 3500);
 
     try {
-        const aiResponse = await askGemini(chatId, text);
+        const aiResponse = await askGeminiMusic(chatId, text);
         clearInterval(typingInterval);
 
+        // Birinchi qatordan qo'shiq nomini ajratib olish (tugma uchun)
+        const cleanQuery = text.slice(0, 35);
         const inlineKeyboard = {
             inline_keyboard: [
-                [{ text: "🔊 Ovozli eshitish", callback_data: "tts_last" }]
+                [
+                    { text: "▶️ YouTube'da tinglash", url: `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}` },
+                    { text: "➕ Pleylistga qo'shish", callback_data: `add_pl_${encodeURIComponent(cleanQuery)}` }
+                ]
             ]
         };
 
@@ -390,12 +528,12 @@ async function handleUpdate(update) {
         });
     } catch (err) {
         clearInterval(typingInterval);
-        console.error('Xatoga javob berishda xato:', err);
-        await sendLongMessage(chatId, "Kechirasiz, xatolik yuz berdi.");
+        console.error('Qidiruvda xatolik:', err);
+        await sendLongMessage(chatId, "❌ Kechirasiz, qidiruvda xatolik yuz berdi. Iltimos, qayta urinib ko'ring.");
     }
 }
 
-// Long Polling
+// Telegram Long Polling
 let offset = 0;
 let isRunning = true;
 
@@ -425,7 +563,7 @@ async function pollUpdates() {
 
 // Botni ishga tushirish
 async function startBot() {
-    console.log("Telegramga ulanmoqda...");
+    console.log("Telegram API ga ulanmoqda...");
     const me = await tgCall('getMe');
     if (!me || !me.ok) {
         console.error("❌ Telegramga ulanib bo'lmadi:", me);
@@ -433,13 +571,13 @@ async function startBot() {
         return;
     }
 
-    console.log("=========================================");
-    console.log(`✅ Google Gemini Ovozli Boti ishga tushdi!`);
+    console.log("==================================================");
+    console.log(`✅ Sun'iy Intellekt Musiqa Boti muvaffaqiyatli ishga tushdi!`);
     console.log(`🤖 Bot nomi: ${me.result.first_name}`);
-    console.log(`🔗 Bot havolasi: https://t.me/${me.result.username}`);
-    console.log(`🎙 Ovoz sintezi (TTS): Gemini 3.8 Flash TTS`);
-    console.log("=========================================");
-    console.log("Xabarlar kutilmoqda...\n");
+    console.log(`🔗 Bot linki: https://t.me/${me.result.username}`);
+    console.log(`🧠 Sun'iy intellekt: Google Gemini (Multimodal + Audio)`);
+    console.log("==================================================");
+    console.log("Xabarlar va audio qidiruvlar kutilmoqda...\n");
 
     pollUpdates();
 }
@@ -447,7 +585,7 @@ async function startBot() {
 startBot();
 
 process.on('SIGINT', () => {
-    console.log('\nBot to\'xtatildi.');
+    console.log("\nBot to'xtatildi.");
     isRunning = false;
     process.exit(0);
 });
